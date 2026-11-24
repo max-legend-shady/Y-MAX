@@ -36,7 +36,7 @@ class_index = 0
 
 def introduction():
     # Display the project name, version, and author
-    print("\n--- WELCOME TO Y-MAX ---")
+    print("\n----- WELCOME TO Y-MAX -----")
     print("YOLO-based Multimodal Analysis eXplorer")
     print(f"Version {project_version}")
     print("\nCreated by Manuel Heredia")
@@ -45,7 +45,7 @@ def introduction():
 def make_menu(title, options):
     # Display the menu title and add the project heading on the main menu
     if title == "MAIN MENU":
-        print("--- Y-MAX ---")
+        print("---- Y-MAX ----")
     print(f"\n--- {title} ---")
     # Display each option with a number
     for number, option in enumerate(options, start=1):
@@ -208,6 +208,7 @@ def choose_files(file_type):
     else:
         # Prevent unsupported internal file types from being processed
         raise ValueError("Unsupported file type. Use 'image' or 'video'.")
+    print("\n--- FOLDER PATH SELECTION ---")
     # Return to the previous workflow menu when the user backs out of folder selection
     while True:
         folder_path_text = input(f"Enter the folder path (leave blank for input/{plural_label}, or enter 'back'): ").strip().strip("&").strip().strip('"').strip("'")
@@ -275,6 +276,7 @@ def choose_files(file_type):
 
 
 def choose_confidence_threshold():
+    print("\n--- CONFIDENCE THRESHOLD SELECTION ---")
     # Keep asking until the user enters a valid confidence threshold or returns to model selection
     while True:
         threshold_text = input(f"Enter the confidence threshold (0-1, default {default_threshold}, or 'back'): ").strip()
