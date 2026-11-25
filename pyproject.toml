@@ -1,7 +1,7 @@
 [project]
 name = "Y-MAX"
-version = "1.1.0"
-description = "A computer-vision application for detecting people in images and videos using YOLO."
+version = "1.2.0"
+description = "A computer-vision application for detecting people in images and tracking them across videos using YOLO and ByteTrack."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
