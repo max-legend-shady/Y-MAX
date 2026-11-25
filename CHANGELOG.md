@@ -2,6 +2,24 @@
 
 Notable changes to Y-MAX are documented here. Planned features are not part of the current release.
 
+## [1.2.0] — Codename: INITIATE TRACKING
+
+### Added
+
+- Video person tracking using Ultralytics YOLO and the ByteTrack tracking algorithm.
+- Persistent tracking IDs across consecutive video frames.
+- Tracking IDs displayed in annotated video outputs.
+- Tracking statistics for individual videos: tracked detections and distinct track IDs.
+- Batch tracking statistics that aggregate track instances across processed videos.
+
+### Improved
+
+- Video output filenames now include a tracking label to distinguish tracked videos from earlier detection-only outputs.
+- Video reports now distinguish total detections across frames, tracked detections, and distinct track IDs.
+- Tracking state is now reset when processing a new video, preventing tracking information from carrying over between separate videos.
+- Instructions and README now explain tracking behaviour, statistics, navigation, and limitations.
+- README now contains more information, including an index, a walkthrough of how the program works, a list of supported file types, and a list of limitations.
+
 ## [1.1.0] — Codename: MOTION DETECTED
 
 ### Added
@@ -29,8 +47,8 @@ Notable changes to Y-MAX are documented here. Planned features are not part of t
 
 ## Planned updates
 
--  **[1.2.0] — Object tracking:** persistent object IDs across video frames.
-
 -  **[2.0.0] — Multimodal analysis:** RGB-D depth information and related spatial analysis.
+
+-  **[2.1.0] — Live feeds:** Live analysis of images/video received from cameras connected to your system.
 
 *Note: These are development targets, not implemented features. Their scope may change.*
