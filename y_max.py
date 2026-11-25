@@ -24,12 +24,13 @@ model_extensions = [".pt"]
 # Define the available pretrained YOLO models in the same order as the model menu
 model_files = ["yolo26n.pt", "yolo26s.pt", "yolo26m.pt", "yolo26l.pt", "yolo26x.pt"]
 # Define the project version and every default value used by an input or processing fallback
-project_version = "1.1.0"
+project_version = "1.2.0"
 default_model = "yolo26n.pt"
 default_threshold = 0.5
 default_image_folder = input_images
 default_video_folder = input_videos
 default_video_fps = 30.0
+default_tracker = "bytetrack.yaml"
 # Define the YOLO class index used to detect people
 class_index = 0
 
@@ -95,25 +96,30 @@ def get_file_size(file_path):
         return 0
 
 
-def print_batch_summary(media_label, batch_start, selected_count, completed_count, failed_count, interrupted_count, total_detections, total_frames, input_bytes, output_bytes, processing_seconds):
+def print_batch_summary(media_label, batch_start, selected_count, completed_count, failed_count, interrupted_count, total_detections, total_frames, input_bytes, output_bytes, processing_seconds, total_tracked_detections=0, total_track_instances=0):
     # Calculate the total elapsed time, including model loading and processing
     total_elapsed = time.perf_counter() - batch_start
     print(f"\n--- {media_label.upper()} BATCH SUMMARY ---")
     # Report how many selected files completed, failed, or were interrupted
-    print(f"Files selected: {selected_count}")
+    print(f"\nFiles selected: {selected_count}")
     print(f"Files completed: {completed_count}")
     print(f"Files failed: {failed_count}")
     print(f"Files interrupted: {interrupted_count}")
     # Report the total detection count and data sizes
-    print(f"Total person detections: {total_detections}")
+    print(f"\nTotal person detections: {total_detections}")
     print(f"Input data processed: {format_bytes(input_bytes)}")
     print(f"Output data saved: {format_bytes(output_bytes)}")
     # Report the total task duration and average processing rate
-    print(f"Total task time: {total_elapsed:.2f} seconds")
+    print(f"\nTotal task time: {total_elapsed:.2f} seconds")
     print(f"Processing time: {processing_seconds:.2f} seconds")
-    if media_label == "video" and processing_seconds > 0:
-        print(f"Average processing FPS: {total_frames / processing_seconds:.2f}")
-        print(f"Total frames processed: {total_frames}")
+    # Display video tracking statistics and processing performance
+    if media_label == "video":
+        print(f"Total tracked detections: {total_tracked_detections}")
+        print(f"Track instances across videos: {total_track_instances}")
+        if processing_seconds > 0:
+            print(f"Average processing FPS: {total_frames / processing_seconds:.2f}")
+            print(f"Total frames processed: {total_frames}")
+    # Display the average processing rate for image batches
     elif media_label == "image" and processing_seconds > 0:
         print(f"Average image processing rate: {(completed_count + failed_count) / processing_seconds:.2f} images/second")
 
@@ -362,9 +368,12 @@ def run_video_detection(model, model_name, video_path, confidence_threshold):
         capture.release()
         writer.release()
         raise OSError("Could not create the output video.")
-    # Initialise counters for processed frames and detections across all frames
+    # Initialise counters for processed frames, detections, and tracked detections
     frame_count = 0
     total_detections = 0
+    tracked_detections = 0
+    # Store every different tracking ID observed throughout the video
+    unique_track_ids = set()
     try:
         # Read, analyse, annotate, and write each frame until the video ends or the user interrupts
         while True:
@@ -372,11 +381,18 @@ def run_video_detection(model, model_name, video_path, confidence_threshold):
             # Stop when OpenCV reaches the end of the video
             if not success:
                 break
-            # Run person detection on the current frame
-            results = model.predict(source=frame, classes=[class_index], conf=confidence_threshold, verbose=False)
+            # Run person tracking on the current frame and preserve IDs between consecutive frames
+            results = model.track(source=frame, classes=[class_index], conf=confidence_threshold, tracker=default_tracker, persist=frame_count > 0, verbose=False)
             result = results[0]
             # Add this frame's detections to the running total
             total_detections += len(result.boxes)
+            # Retrieve the tracking IDs when the tracker has assigned them
+            if result.boxes.id is not None:
+                frame_track_ids = result.boxes.id.int().cpu().tolist()
+                # Count every detection that received a tracking ID
+                tracked_detections += len(frame_track_ids)
+                # Add the current IDs to the set without duplicating existing IDs
+                unique_track_ids.update(frame_track_ids)
             # Draw the detections and write the annotated frame
             writer.write(result.plot())
             # Update the processed-frame count and periodically report progress
@@ -391,7 +407,7 @@ def run_video_detection(model, model_name, video_path, confidence_threshold):
             output_path.unlink()
         elapsed = time.perf_counter() - video_start
         print("Current video interrupted. Its incomplete output was removed; previously completed videos remain saved.")
-        return False, frame_count, total_detections, None, elapsed, output_fps
+        return False, frame_count, total_detections, tracked_detections, len(unique_track_ids), None, elapsed, output_fps
     except Exception:
         # Release resources and remove the incomplete output if processing fails
         capture.release()
@@ -411,7 +427,7 @@ def run_video_detection(model, model_name, video_path, confidence_threshold):
     elapsed = time.perf_counter() - video_start
     output_bytes = get_file_size(output_path)
     # Return the completion state, frame count, detections, output path, elapsed time, and output FPS
-    return True, frame_count, total_detections, output_path, elapsed, output_fps
+    return True, frame_count, total_detections, tracked_detections, len(unique_track_ids), output_path, elapsed, output_fps
 
 
 def run_image_analysis():
@@ -538,6 +554,8 @@ def run_video_analysis():
             failed_count = 0
             interrupted_count = 0
             total_detections = 0
+            total_tracked_detections = 0
+            total_track_instances = 0
             total_frames = 0
             input_bytes = 0
             output_bytes = 0
@@ -550,15 +568,21 @@ def run_video_analysis():
                 print(f"\nProcessing video {number} of {len(selected_videos)}: {video_path.name}...")
                 try:
                     # Run detection and retrieve the completion state and video statistics
-                    finished, frame_count, detections, output_path, file_elapsed, output_fps = run_video_detection(model, model_name, video_path, confidence_threshold)
+                    # Retrieve the video completion state and all detection and tracking statistics
+                    finished, frame_count, detections, tracked_detections, track_count, output_path, file_elapsed, output_fps = run_video_detection(model, model_name, video_path, confidence_threshold)
+                    # Add the current video's processing time and statistics to the batch totals
                     processing_seconds += file_elapsed
                     total_frames += frame_count
                     total_detections += detections
+                    total_tracked_detections += tracked_detections
+                    total_track_instances += track_count
                     # Stop the remaining queue if the current video was interrupted
                     if not finished:
                         interrupted_count += 1
                         print(f"Frames processed before interruption: {frame_count}")
                         print(f"Detections before interruption: {detections}")
+                        print(f"Tracked detections before interruption: {tracked_detections}")
+                        print(f"Distinct track IDs before interruption: {track_count}")
                         print(f"Time elapsed before interruption: {file_elapsed:.2f} seconds")
                         print(f"Average processing FPS before interruption: {frame_count / file_elapsed:.2f}" if file_elapsed > 0 else "Average processing FPS: unavailable")
                         print(f"Input size: {format_bytes(input_size)}")
@@ -569,8 +593,11 @@ def run_video_analysis():
                     output_bytes += output_size
                     completed_count += 1
                     # Display detailed statistics for the completed video
+                    # Display detailed detection and tracking statistics for the completed video
                     print(f"Processed frames: {frame_count}")
                     print(f"Total detections across frames: {detections}")
+                    print(f"Tracked detections: {tracked_detections}")
+                    print(f"Distinct track IDs: {track_count}")
                     print(f"Processing time: {file_elapsed:.2f} seconds")
                     print(f"Average processing FPS: {frame_count / file_elapsed:.2f}" if file_elapsed > 0 else "Average processing FPS: unavailable")
                     print(f"Output video FPS: {output_fps:.2f}")
@@ -594,25 +621,25 @@ def run_video_analysis():
                     print(f"Error processing '{video_path.name}': {error}. Please check the video and try again.")
                     print(f"Time elapsed before failure: {file_elapsed:.2f} seconds")
                     print(f"Input size: {format_bytes(input_size)}")
-            # Display the final batch report and output location
-            print_batch_summary("video", batch_start, len(selected_videos), completed_count, failed_count, interrupted_count, total_detections, total_frames, input_bytes, output_bytes, processing_seconds)
+            # Display the final video batch report, including the tracking statistics
+            print_batch_summary("video", batch_start, len(selected_videos), completed_count, failed_count, interrupted_count, total_detections, total_frames, input_bytes, output_bytes, processing_seconds, total_tracked_detections, total_track_instances)
             print(f"Annotated videos are saved in: {output_videos}")
             return True
 
 
 def read_instructions():
-    # Display setup instructions and the complete image/video analysis workflow
+    # Display the setup instructions and complete image/video analysis workflow
     print("\n--- INSTRUCTIONS ---")
     print("\n--- STEP 1: PREPARATION ---")
     print("Install Python 3.13 or newer and uv, then run 'uv sync' from the Y-MAX project folder.")
     print("Y-MAX creates the required input, output, and models folders automatically.")
     print("Place images in 'input/images' and videos in 'input/videos', or select another folder when prompted.")
     print("\n--- STEP 2: NAVIGATION AND FILE SELECTION ---")
-    print("Choose Image(s) or Video(s) from the media type menu.")
+    print("Choose Image detection or Video tracking from the media selection menu.")
     print("At folder selection, press Enter to use the relevant default input folder.")
     print("Y-MAX searches the selected folder and all its subfolders for supported media files.")
     print("Select individual files by entering their numbers separated by commas, or enter 'all' to select every file found.")
-    print("Type 'back' at any selection prompt to return to the immediately previous menu or selection step.")
+    print("Type 'back' at a supported selection prompt to return to the previous menu or selection step.")
     print("From the file list, 'back' returns to folder selection; from folder selection, it returns to confidence selection.")
     print("From confidence selection, 'back' returns to model selection; from model selection, it returns to media selection.")
     print("\n--- STEP 3: MODEL AND CONFIDENCE ---")
@@ -621,26 +648,38 @@ def read_instructions():
     print("Pretrained weights are loaded from the 'models' folder when present; otherwise Ultralytics may download them.")
     print(f"Enter a confidence threshold between 0 and 1. Press Enter to use the default value {default_threshold}.")
     print("Only detections with confidence equal to or greater than the selected threshold are included.")
-    print("\n--- STEP 4: DETECTION AND CANCELLATION ---")
-    print("Y-MAX currently detects people only, using YOLO class index 0.")
-    print("Images are processed one at a time. Videos are processed one frame at a time.")
-    print("Press Ctrl+C at any time during processing to stop the current batch.")
+    print("\n--- STEP 4: IMAGE DETECTION AND VIDEO TRACKING ---")
+    print("Y-MAX detects and tracks people only, using YOLO class index 0.")
+    print("Images are processed individually using YOLO object detection.")
+    print("Videos are processed frame by frame using YOLO and the ByteTrack tracking algorithm.")
+    print("Tracking assigns IDs to detected people and attempts to preserve those IDs between consecutive frames.")
+    print(f"The configured tracking algorithm is '{default_tracker}'.")
+    print("Tracking IDs are displayed alongside the detection labels in the annotated video.")
+    print("Tracking IDs are temporary labels, not real-world identities.")
+    print("IDs can change or be lost when people become occluded, leave the frame, or are difficult to detect.")
+    print("Tracking starts afresh for each selected video; IDs from different videos cannot be compared.")
+    print("\n--- STEP 5: DETECTION, TRACKING, AND CANCELLATION ---")
+    print("Press Ctrl+C during processing to stop the current batch.")
     print("All outputs completed before the interruption remain saved.")
     print("If an image is interrupted before saving, that image is not saved. An interrupted video's incomplete output is removed.")
     print("Ctrl+C stops the batch; it does not pause and resume the current file.")
-    print("\n--- STEP 5: RESULTS AND STATISTICS ---")
+    print("\n--- STEP 6: RESULTS AND STATISTICS ---")
     print("Annotated images are saved in 'output/images'. Annotated videos are saved in 'output/videos'.")
-    print("Output filenames include the source name, selected model, and confidence threshold; existing files are not overwritten.")
-    print("Per-file and batch reports include elapsed time, input/output sizes, detections, and completion counts.")
+    print("Video output filenames include the source name, tracking label, selected model, and confidence threshold.")
+    print("Image output filenames include the source name, selected model, and confidence threshold.")
+    print("Existing output files are not overwritten; a number is added to avoid filename conflicts.")
+    print("Total person detections count detections across frames, so the same person can be counted repeatedly.")
+    print("Tracked detections count detections that received a tracking ID.")
+    print("Distinct track IDs count the different IDs observed throughout an individual video.")
+    print("Batch track instances are the sum of distinct track IDs from each processed video, not unique people across the batch.")
     print("Video reports also include processed frames, output FPS, and average processing FPS.")
-    print("Video detection totals count detections across frames, not unique people; the same person can be counted repeatedly.")
     print("\n--- SUPPORTED FORMATS AND LIMITATIONS ---")
     print(f"Image formats: {', '.join(image_extensions)}.")
     print(f"Video formats: {', '.join(video_extensions)}.")
     print(f"Custom model formats: {', '.join(model_extensions)}.")
     print("OpenCV-generated output videos do not preserve the source video's audio.")
     print("Y-MAX assumes class index 0 represents people in the selected model.")
-    print("Detection may produce false positives or false negatives; manually check important results.")
+    print("Detection and tracking may produce false positives, false negatives, or ID switches; manually check important results.")
     print("\nThank you for using Y-MAX!")
 
 
@@ -661,7 +700,7 @@ def show_credits():
             # Report a dependency that is not installed in the active environment
             print(f"- {package_name} (not installed)")
     # Describe the educational purpose of the project
-    print("\nThis program was made as a personal project to learn more about computer vision and object detection.")
+    print("\nThis program was made as a personal project to learn more about computer vision, object detection, and multi-object tracking.")
     print("I am also going to write an article on this project, so stay tuned!")
     print("If you have any questions or feedback, please feel free to reach out to me at the following email: manu.heredia.estrada@gmail.com")
     print("\nThank you for using Y-MAX!")
