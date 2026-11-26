@@ -184,4 +184,4 @@ Y-MAX also reports processing statistics:
 
 ----------
 
-**Thank you for using Y-MAX!**
+## Thank you for using Y-MAX!
