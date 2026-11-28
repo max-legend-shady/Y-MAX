@@ -1,11 +1,13 @@
 [project]
 name = "Y-MAX"
-version = "1.2.0"
-description = "A computer-vision application for detecting people in images and tracking them across videos using YOLO and ByteTrack."
+version = "2.0.0"
+description = "A computer-vision application for RGB and RGB-D person detection and tracking using YOLO."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "numpy>=2.5.5",
     "opencv-python>=5.1.0.95",
     "ultralytics>=8.4.215",
+    "lap>=0.5.12",
+    "pyrealsense2==2.59.2.11152",
 ]
